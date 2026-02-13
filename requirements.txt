@@ -1,3 +1,3 @@
 flask
 openai
-yt-dlp
+youtube-transcript-api

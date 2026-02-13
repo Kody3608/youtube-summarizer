@@ -1,78 +1,57 @@
 from flask import Flask, request, render_template
 import openai
 import os
-import subprocess
-import uuid
+from youtube_transcript_api import YouTubeTranscriptApi
+from urllib.parse import urlparse, parse_qs
 
 app = Flask(__name__)
 
-# OpenAI APIキーを環境変数から取得
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 # -----------------------------
-# 字幕を取得する関数
+# YouTube URL → video_id 抽出
 # -----------------------------
-def get_captions(youtube_url):
-    uid = str(uuid.uuid4())
-    output_template = f"/tmp/{uid}.%(ext)s"
+def extract_video_id(url):
+    parsed = urlparse(url)
 
-    # Python モジュール経由で yt-dlp を呼ぶ
-    command = [
-        "python", "-m", "yt_dlp",
-        "--skip-download",             # 音声・動画はDLしない
-        "--write-auto-sub",            # 自動生成字幕
-        "--write-sub",                 # 公式字幕
-        "--sub-lang", "ja,en",
-        "--sub-format", "vtt",
-        "-o", output_template,
-        youtube_url
-    ]
+    if parsed.hostname in ["www.youtube.com", "youtube.com"]:
+        return parse_qs(parsed.query).get("v", [None])[0]
+    if parsed.hostname == "youtu.be":
+        return parsed.path[1:]
 
-    result = subprocess.run(command, capture_output=True, text=True)
-
-    # デバッグ用ログ出力（Render Logs に表示される）
-    print("yt-dlp stdout:\n", result.stdout)
-    print("yt-dlp stderr:\n", result.stderr)
-    print("return code:", result.returncode)
-
-    if result.returncode != 0:
-        return None, f"yt-dlp 実行でエラーが発生しました:\n{result.stderr}"
-
-    # 出力ファイルを探す
-    for file in os.listdir("/tmp"):
-        if file.startswith(uid) and file.endswith(".vtt"):
-            with open(f"/tmp/{file}", "r", encoding="utf-8") as f:
-                return f.read(), None
-
-    return None, "字幕ファイルが見つかりませんでした。"
+    return None
 
 # -----------------------------
-# GPTで要約
+# 字幕取得（Bot判定なし）
+# -----------------------------
+def get_captions(video_url):
+    video_id = extract_video_id(video_url)
+    if not video_id:
+        return None, "URLが正しくありません。"
+
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(
+            video_id,
+            languages=["ja", "en"]
+        )
+        text = " ".join([item["text"] for item in transcript])
+        return text, None
+    except Exception as e:
+        return None, f"字幕を取得できませんでした: {e}"
+
+# -----------------------------
+# GPT 要約
 # -----------------------------
 def summarize_text(text):
-    try:
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": f"以下の字幕を日本語で簡潔に要約してください。\n\n{text}"}
-            ],
-            max_tokens=500
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"OpenAI APIでエラーが発生しました: {e}"
-
-# -----------------------------
-# メイン処理
-# -----------------------------
-def summarize_youtube(video_url):
-    captions, error = get_captions(video_url)
-    if error:
-        return error
-    if not captions:
-        return "字幕が取得できませんでした。"
-    return summarize_text(captions)
+    response = openai.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "以下の字幕を日本語で簡潔に要約してください。"},
+            {"role": "user", "content": text}
+        ],
+        max_tokens=500
+    )
+    return response.choices[0].message.content
 
 # -----------------------------
 # Flask
@@ -80,11 +59,18 @@ def summarize_youtube(video_url):
 @app.route("/", methods=["GET", "POST"])
 def index():
     summary = ""
+    error = ""
+
     if request.method == "POST":
         url = request.form.get("url")
-        if url:
-            summary = summarize_youtube(url)
-    return render_template("index.html", summary=summary)
+        captions, err = get_captions(url)
+
+        if err:
+            error = err
+        else:
+            summary = summarize_text(captions)
+
+    return render_template("index.html", summary=summary, error=error)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
