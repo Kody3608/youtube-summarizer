@@ -1,16 +1,17 @@
 from flask import Flask, request, render_template
 import openai
 import os
+import googleapiclient.discovery
 from urllib.parse import urlparse, parse_qs
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
 app = Flask(__name__)
 
-# OpenAI APIキーを環境変数から取得
+# 環境変数から OpenAI と YouTube API キーを取得
 openai.api_key = os.environ.get("OPENAI_API_KEY")
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 # -----------------------------
-# YouTube URL → video_id 抽出
+# YouTube URL → video_id
 # -----------------------------
 def extract_video_id(url):
     parsed = urlparse(url)
@@ -21,7 +22,7 @@ def extract_video_id(url):
     return None
 
 # -----------------------------
-# 字幕取得（v0系互換）
+# 字幕取得（YouTube Data API 版）
 # -----------------------------
 def get_captions(video_url):
     video_id = extract_video_id(video_url)
@@ -29,15 +30,47 @@ def get_captions(video_url):
         return None, "URLが正しくありません。"
 
     try:
-        # v0系の get_transcript を使用
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["ja","en"])
-        text = " ".join([item["text"] for item in transcript])
+        youtube = googleapiclient.discovery.build(
+            "youtube", "v3", developerKey=YOUTUBE_API_KEY
+        )
+
+        # captions.list で字幕情報取得
+        request = youtube.captions().list(
+            part="snippet",
+            videoId=video_id
+        )
+        response = request.execute()
+
+        if not response.get("items"):
+            return None, "字幕が見つかりませんでした"
+
+        # 日本語優先、なければ英語
+        caption_id = None
+        for item in response["items"]:
+            lang = item["snippet"]["language"]
+            if lang.startswith("ja"):
+                caption_id = item["id"]
+                break
+        if not caption_id:
+            for item in response["items"]:
+                lang = item["snippet"]["language"]
+                if lang.startswith("en"):
+                    caption_id = item["id"]
+                    break
+        if not caption_id:
+            return None, "対応言語の字幕がありません"
+
+        # 字幕ダウンロード
+        caption_request = youtube.captions().download(
+            id=caption_id,
+            tfmt="srt"  # srt形式で取得
+        )
+        caption_response = caption_request.execute()
+        text = caption_response.decode("utf-8")
         return text, None
 
-    except (TranscriptsDisabled, NoTranscriptFound) as e:
-        return None, f"字幕を取得できませんでした: {e}"
     except Exception as e:
-        return None, f"予期せぬエラー: {e}"
+        return None, f"字幕取得中にエラーが発生しました: {e}"
 
 # -----------------------------
 # GPT 要約
