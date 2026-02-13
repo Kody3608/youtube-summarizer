@@ -1,11 +1,12 @@
 from flask import Flask, request, render_template
 import openai
 import os
-from youtube_transcript_api import YouTubeTranscriptApi
 from urllib.parse import urlparse, parse_qs
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
 app = Flask(__name__)
 
+# OpenAI APIキーを環境変数から取得
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 # -----------------------------
@@ -13,16 +14,14 @@ openai.api_key = os.environ.get("OPENAI_API_KEY")
 # -----------------------------
 def extract_video_id(url):
     parsed = urlparse(url)
-
     if parsed.hostname in ["www.youtube.com", "youtube.com"]:
         return parse_qs(parsed.query).get("v", [None])[0]
     if parsed.hostname == "youtu.be":
         return parsed.path[1:]
-
     return None
 
 # -----------------------------
-# 字幕取得（Bot判定なし）
+# 字幕取得（最新API対応）
 # -----------------------------
 def get_captions(video_url):
     video_id = extract_video_id(video_url)
@@ -30,28 +29,48 @@ def get_captions(video_url):
         return None, "URLが正しくありません。"
 
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(
-            video_id,
-            languages=["ja", "en"]
-        )
-        text = " ".join([item["text"] for item in transcript])
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+
+        # 日本語優先 → なければ英語
+        try:
+            transcript = transcript_list.find_transcript(['ja'])
+        except NoTranscriptFound:
+            transcript = transcript_list.find_transcript(['en'])
+
+        fetched = transcript.fetch()
+        text = " ".join([item["text"] for item in fetched])
         return text, None
-    except Exception as e:
+
+    except (TranscriptsDisabled, NoTranscriptFound) as e:
         return None, f"字幕を取得できませんでした: {e}"
+    except Exception as e:
+        return None, f"予期せぬエラー: {e}"
 
 # -----------------------------
 # GPT 要約
 # -----------------------------
 def summarize_text(text):
-    response = openai.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "以下の字幕を日本語で簡潔に要約してください。"},
-            {"role": "user", "content": text}
-        ],
-        max_tokens=500
-    )
-    return response.choices[0].message.content
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": f"以下の字幕を日本語で簡潔に要約してください:\n\n{text}"}
+            ],
+            max_tokens=500
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"OpenAI APIでエラーが発生しました: {e}"
+
+# -----------------------------
+# メイン処理
+# -----------------------------
+def summarize_youtube(video_url):
+    captions, error = get_captions(video_url)
+    if error:
+        return error
+    return summarize_text(captions)
 
 # -----------------------------
 # Flask
@@ -60,16 +79,10 @@ def summarize_text(text):
 def index():
     summary = ""
     error = ""
-
     if request.method == "POST":
         url = request.form.get("url")
-        captions, err = get_captions(url)
-
-        if err:
-            error = err
-        else:
-            summary = summarize_text(captions)
-
+        if url:
+            summary = summarize_youtube(url)
     return render_template("index.html", summary=summary, error=error)
 
 if __name__ == "__main__":
