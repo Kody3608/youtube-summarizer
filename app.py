@@ -1,20 +1,17 @@
 from flask import Flask, request, render_template
 import os
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
-
 import requests
+from urllib.parse import urlparse, parse_qs
 
 app = Flask(__name__)
 
 HF_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
-
-# Hugging Face 日本語要約モデル（無料枠）
 HF_MODEL = "rinna/japanese-gpt2-medium-summary"
 
 # -----------------------------
 # YouTube URL → video_id
 # -----------------------------
-from urllib.parse import urlparse, parse_qs
 def extract_video_id(url):
     parsed = urlparse(url)
     if parsed.hostname in ["www.youtube.com", "youtube.com"]:
@@ -32,25 +29,25 @@ def get_captions(video_url):
         return None, "URLが正しくありません。"
 
     try:
-        # 公開字幕・自動生成字幕を取得
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        # 日本語字幕を優先
+        # 日本語優先
         if transcript_list.find_transcript(['ja']):
             transcript = transcript_list.find_transcript(['ja'])
+            language = "日本語"
         else:
-            # 日本語がなければ英語
             transcript = transcript_list.find_transcript(['en'])
+            language = "英語"
         captions = transcript.fetch()
         text = "\n".join([x['text'] for x in captions])
-        return text, None
+        return text, None, language
     except VideoUnavailable:
-        return None, "動画が存在しません。"
+        return None, "動画が存在しません。", None
     except TranscriptsDisabled:
-        return None, "字幕が無効になっています。"
+        return None, "字幕が無効になっています。ブラウザでは字幕が見える可能性があります。", None
     except NoTranscriptFound:
-        return None, "対応言語の字幕が見つかりません。"
+        return None, "字幕が見つかりません。ブラウザでは字幕が見える可能性があります。", None
     except Exception as e:
-        return None, f"字幕取得中に予期せぬエラー: {e}"
+        return None, f"字幕取得中に予期せぬエラー: {e}", None
 
 # -----------------------------
 # Hugging Face 要約
@@ -61,7 +58,6 @@ def hf_summarize(text):
 
     API_URL = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-
     payload = {
         "inputs": text,
         "parameters": {"max_length": 150, "min_length": 40, "do_sample": False}
@@ -92,14 +88,15 @@ def hf_summarize(text):
 def index():
     summary = ""
     error = ""
+    language = ""
     if request.method == "POST":
         url = request.form.get("url")
-        captions, err = get_captions(url)
+        captions, err, language = get_captions(url)
         if err:
             error = err
         else:
             summary = hf_summarize(captions)
-    return render_template("index.html", summary=summary, error=error)
+    return render_template("index.html", summary=summary, error=error, language=language)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
