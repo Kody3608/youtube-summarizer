@@ -22,7 +22,7 @@ def extract_video_id(url):
     return None
 
 # -----------------------------
-# 字幕取得（APIキー専用・エラーハンドリング強化）
+# 字幕取得（APIキー専用・改良版）
 # -----------------------------
 def get_captions(video_url):
     video_id = extract_video_id(video_url)
@@ -33,11 +33,11 @@ def get_captions(video_url):
         return None, "YouTube APIキーが設定されていません。Render環境変数を確認してください。"
 
     try:
-        # captions.list を直接 REST API 呼び出し
+        # captions.list を REST API で取得
         url = f"https://youtube.googleapis.com/youtube/v3/captions?part=snippet&videoId={video_id}&key={YOUTUBE_API_KEY}"
         r = requests.get(url)
         if r.status_code == 400:
-            return None, f"APIキーが無効です。正しいキーを設定してください。"
+            return None, "YouTube APIキーが無効です。正しいキーを設定してください。"
         if r.status_code != 200:
             return None, f"字幕取得中にエラーが発生しました: HTTP {r.status_code}"
 
@@ -78,6 +78,8 @@ def get_captions(video_url):
 # GPT 要約
 # -----------------------------
 def summarize_text(text):
+    if not openai.api_key:
+        return "OpenAI APIキーが設定されていません。Render環境変数を確認してください。"
     try:
         response = openai.chat.completions.create(
             model="gpt-4o-mini",
