@@ -1,68 +1,91 @@
-from flask import Flask, render_template, request
-import subprocess
-import os
+from flask import Flask, request, render_template
 import openai
+import os
+import subprocess
 import uuid
 
 app = Flask(__name__)
 
+# OpenAI APIキーを環境変数から取得
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-
+# -----------------------------
+# 字幕を取得する関数
+# -----------------------------
 def get_captions(youtube_url):
     uid = str(uuid.uuid4())
     output_template = f"/tmp/{uid}.%(ext)s"
 
+    # Python モジュール経由で yt-dlp を呼ぶ
     command = [
-        "yt-dlp",
-        "--skip-download",
-        "--write-auto-sub",
-        "--write-sub",
+        "python", "-m", "yt_dlp",
+        "--skip-download",             # 音声・動画はDLしない
+        "--write-auto-sub",            # 自動生成字幕
+        "--write-sub",                 # 公式字幕
         "--sub-lang", "ja,en",
         "--sub-format", "vtt",
         "-o", output_template,
         youtube_url
     ]
 
-    subprocess.run(command, capture_output=True, text=True)
+    result = subprocess.run(command, capture_output=True, text=True)
 
-    # 字幕ファイル探索
+    # デバッグ用ログ出力（Render Logs に表示される）
+    print("yt-dlp stdout:\n", result.stdout)
+    print("yt-dlp stderr:\n", result.stderr)
+    print("return code:", result.returncode)
+
+    if result.returncode != 0:
+        return None, f"yt-dlp 実行でエラーが発生しました:\n{result.stderr}"
+
+    # 出力ファイルを探す
     for file in os.listdir("/tmp"):
         if file.startswith(uid) and file.endswith(".vtt"):
             with open(f"/tmp/{file}", "r", encoding="utf-8") as f:
-                return f.read()
+                return f.read(), None
 
-    return None
+    return None, "字幕ファイルが見つかりませんでした。"
 
+# -----------------------------
+# GPTで要約
+# -----------------------------
+def summarize_text(text):
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": f"以下の字幕を日本語で簡潔に要約してください。\n\n{text}"}
+            ],
+            max_tokens=500
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"OpenAI APIでエラーが発生しました: {e}"
 
-def summarize(text):
-    response = openai.ChatCompletion.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "以下の字幕を日本語で簡潔に要約してください。"},
-            {"role": "user", "content": text}
-        ],
-        max_tokens=500
-    )
-    return response.choices[0].message.content
+# -----------------------------
+# メイン処理
+# -----------------------------
+def summarize_youtube(video_url):
+    captions, error = get_captions(video_url)
+    if error:
+        return error
+    if not captions:
+        return "字幕が取得できませんでした。"
+    return summarize_text(captions)
 
-
+# -----------------------------
+# Flask
+# -----------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
-    summary = None
-    error = None
-
+    summary = ""
     if request.method == "POST":
-        url = request.form["url"]
-
-        captions = get_captions(url)
-        if not captions:
-            error = "この動画には字幕がないか、取得できませんでした。"
-        else:
-            summary = summarize(captions)
-
-    return render_template("index.html", summary=summary, error=error)
-
+        url = request.form.get("url")
+        if url:
+            summary = summarize_youtube(url)
+    return render_template("index.html", summary=summary)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
