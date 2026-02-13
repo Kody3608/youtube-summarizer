@@ -1,12 +1,12 @@
 from flask import Flask, request, render_template
 import openai
 import os
-import googleapiclient.discovery
+import requests
 from urllib.parse import urlparse, parse_qs
 
 app = Flask(__name__)
 
-# 環境変数から OpenAI と YouTube API キーを取得
+# 環境変数からキー取得
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
@@ -22,7 +22,7 @@ def extract_video_id(url):
     return None
 
 # -----------------------------
-# 字幕取得（YouTube Data API 版）
+# 字幕取得（APIキー専用）
 # -----------------------------
 def get_captions(video_url):
     video_id = extract_video_id(video_url)
@@ -30,29 +30,26 @@ def get_captions(video_url):
         return None, "URLが正しくありません。"
 
     try:
-        youtube = googleapiclient.discovery.build(
-            "youtube", "v3", developerKey=YOUTUBE_API_KEY
-        )
+        # captions.list を直接 REST API 呼び出し
+        url = f"https://youtube.googleapis.com/youtube/v3/captions?part=snippet&videoId={video_id}&key={YOUTUBE_API_KEY}"
+        r = requests.get(url)
+        if r.status_code != 200:
+            return None, f"字幕取得中にエラーが発生しました: {r.text}"
 
-        # captions.list で字幕情報取得
-        request = youtube.captions().list(
-            part="snippet",
-            videoId=video_id
-        )
-        response = request.execute()
-
-        if not response.get("items"):
+        data = r.json()
+        items = data.get("items", [])
+        if not items:
             return None, "字幕が見つかりませんでした"
 
-        # 日本語優先、なければ英語
+        # 日本語優先 → 英語 fallback
         caption_id = None
-        for item in response["items"]:
+        for item in items:
             lang = item["snippet"]["language"]
             if lang.startswith("ja"):
                 caption_id = item["id"]
                 break
         if not caption_id:
-            for item in response["items"]:
+            for item in items:
                 lang = item["snippet"]["language"]
                 if lang.startswith("en"):
                     caption_id = item["id"]
@@ -61,16 +58,16 @@ def get_captions(video_url):
             return None, "対応言語の字幕がありません"
 
         # 字幕ダウンロード
-        caption_request = youtube.captions().download(
-            id=caption_id,
-            tfmt="srt"  # srt形式で取得
-        )
-        caption_response = caption_request.execute()
-        text = caption_response.decode("utf-8")
+        download_url = f"https://www.googleapis.com/youtube/v3/captions/{caption_id}?tfmt=srt&key={YOUTUBE_API_KEY}"
+        r2 = requests.get(download_url)
+        if r2.status_code != 200:
+            return None, f"字幕取得中にエラーが発生しました: {r2.text}"
+
+        text = r2.text
         return text, None
 
     except Exception as e:
-        return None, f"字幕取得中にエラーが発生しました: {e}"
+        return None, f"字幕取得中に予期せぬエラーが発生しました: {e}"
 
 # -----------------------------
 # GPT 要約
