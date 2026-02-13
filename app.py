@@ -1,108 +1,68 @@
-from flask import Flask, request, render_template
-import openai
+from flask import Flask, render_template, request
+import subprocess
 import os
-from yt_dlp import YoutubeDL
-
-openai.api_key = os.getenv("OPENAI_API_KEY")
+import openai
+import uuid
 
 app = Flask(__name__)
 
-# -----------------------------
-# 字幕を取得する関数
-# -----------------------------
-def get_captions(video_url):
-    ydl_opts = {
-        "skip_download": True,          # 動画・音声はDLしない
-        "writesubtitles": True,
-        "writeautomaticsub": True,      # 自動生成字幕もOK
-        "subtitleslangs": ["ja", "en"],
-        "subtitlesformat": "vtt",
-        "quiet": True,
-    }
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(video_url, download=False)
 
-        subtitles = info.get("subtitles") or info.get("automatic_captions")
-        if not subtitles:
-            return None
+def get_captions(youtube_url):
+    uid = str(uuid.uuid4())
+    output_template = f"/tmp/{uid}.%(ext)s"
 
-        # 日本語優先、なければ英語
-        for lang in ["ja", "en"]:
-            if lang in subtitles:
-                subtitle_url = subtitles[lang][0]["url"]
-                return subtitle_url
+    command = [
+        "yt-dlp",
+        "--skip-download",
+        "--write-auto-sub",
+        "--write-sub",
+        "--sub-lang", "ja,en",
+        "--sub-format", "vtt",
+        "-o", output_template,
+        youtube_url
+    ]
+
+    subprocess.run(command, capture_output=True, text=True)
+
+    # 字幕ファイル探索
+    for file in os.listdir("/tmp"):
+        if file.startswith(uid) and file.endswith(".vtt"):
+            with open(f"/tmp/{file}", "r", encoding="utf-8") as f:
+                return f.read()
 
     return None
 
 
-# -----------------------------
-# 字幕URLからテキスト取得
-# -----------------------------
-def fetch_subtitle_text(subtitle_url):
-    import requests
-    response = requests.get(subtitle_url)
-    text = response.text
-
-    lines = []
-    for line in text.splitlines():
-        if "-->" in line:
-            continue
-        if line.strip() == "" or line.strip().isdigit():
-            continue
-        lines.append(line)
-
-    return " ".join(lines)
-
-
-# -----------------------------
-# GPTで要約
-# -----------------------------
-def summarize_text(text):
-    response = openai.chat.completions.create(
-        model="gpt-4",
+def summarize(text):
+    response = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {
-                "role": "user",
-                "content": f"以下の字幕テキストを日本語で簡潔に要約してください。\n\n{text}"
-            }
-        ]
+            {"role": "system", "content": "以下の字幕を日本語で簡潔に要約してください。"},
+            {"role": "user", "content": text}
+        ],
+        max_tokens=500
     )
     return response.choices[0].message.content
 
 
-# -----------------------------
-# メイン処理
-# -----------------------------
-def summarize_youtube(video_url):
-    subtitle_url = get_captions(video_url)
-    if not subtitle_url:
-        return "この動画には字幕がありません。要約できません。"
-
-    text = fetch_subtitle_text(subtitle_url)
-    if not text:
-        return "字幕の取得に失敗しました。"
-
-    return summarize_text(text)
-
-
-# -----------------------------
-# Flask
-# -----------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
-    summary = ""
-    if request.method == "POST":
-        url = request.form.get("url")
-        if url:
-            try:
-                summary = summarize_youtube(url)
-            except Exception as e:
-                summary = f"エラーが発生しました: {e}"
+    summary = None
+    error = None
 
-    return render_template("index.html", summary=summary)
+    if request.method == "POST":
+        url = request.form["url"]
+
+        captions = get_captions(url)
+        if not captions:
+            error = "この動画には字幕がないか、取得できませんでした。"
+        else:
+            summary = summarize(captions)
+
+    return render_template("index.html", summary=summary, error=error)
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=5000)
