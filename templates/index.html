@@ -5,14 +5,14 @@
     <title>YouTube要約アプリ</title>
 </head>
 <body>
-    <h1>YouTube要約アプリ</h1>
+    <h1>YouTube要約アプリ（字幕版）</h1>
+
     <form method="post">
-        <input type="text" name="url" placeholder="YouTubeのURLを入力" size="50">
+        <input type="text" name="url" size="60" placeholder="YouTubeのURLを入力">
         <button type="submit">要約</button>
     </form>
-    <div>
-        <h2>要約結果</h2>
-        <p>{{ summary }}</p>
-    </div>
+
+    <h2>要約結果</h2>
+    <p>{{ summary }}</p>
 </body>
 </html>

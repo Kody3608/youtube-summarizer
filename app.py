@@ -1,87 +1,95 @@
 from flask import Flask, request, render_template
 import openai
 import os
-import subprocess
-import math
 from yt_dlp import YoutubeDL
-from tempfile import NamedTemporaryFile
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 app = Flask(__name__)
 
-# 音声を一定時間ごとに分割
-def split_audio(input_file, segment_length=300):
-    """
-    segment_length: 1ファイルの長さ（秒） 300秒=5分
-    """
-    import ffmpeg
-    import os
+# -----------------------------
+# 字幕を取得する関数
+# -----------------------------
+def get_captions(video_url):
+    ydl_opts = {
+        "skip_download": True,          # 動画・音声はDLしない
+        "writesubtitles": True,
+        "writeautomaticsub": True,      # 自動生成字幕もOK
+        "subtitleslangs": ["ja", "en"],
+        "subtitlesformat": "vtt",
+        "quiet": True,
+    }
 
-    # 音声情報を取得
-    probe = ffmpeg.probe(input_file)
-    duration = float(probe['format']['duration'])
-    segments = []
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(video_url, download=False)
 
-    for i in range(0, math.ceil(duration), segment_length):
-        output_file = f"segment_{i//segment_length}.mp3"
-        (
-            ffmpeg
-            .input(input_file, ss=i, t=segment_length)
-            .output(output_file, acodec='mp3', vn=True)
-            .overwrite_output()
-            .run(quiet=True)
-        )
-        segments.append(output_file)
-    return segments
+        subtitles = info.get("subtitles") or info.get("automatic_captions")
+        if not subtitles:
+            return None
 
-# Whisperで文字起こし
-def transcribe_audio(file_path):
-    with open(file_path, "rb") as f:
-        transcript = openai.audio.transcriptions.create(
-            model="whisper-1",
-            file=f
-        )
-    return transcript['text']
+        # 日本語優先、なければ英語
+        for lang in ["ja", "en"]:
+            if lang in subtitles:
+                subtitle_url = subtitles[lang][0]["url"]
+                return subtitle_url
 
+    return None
+
+
+# -----------------------------
+# 字幕URLからテキスト取得
+# -----------------------------
+def fetch_subtitle_text(subtitle_url):
+    import requests
+    response = requests.get(subtitle_url)
+    text = response.text
+
+    lines = []
+    for line in text.splitlines():
+        if "-->" in line:
+            continue
+        if line.strip() == "" or line.strip().isdigit():
+            continue
+        lines.append(line)
+
+    return " ".join(lines)
+
+
+# -----------------------------
 # GPTで要約
+# -----------------------------
 def summarize_text(text):
     response = openai.chat.completions.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": f"以下の文章を日本語で簡潔に要約してください:\n{text}"}
+            {
+                "role": "user",
+                "content": f"以下の字幕テキストを日本語で簡潔に要約してください。\n\n{text}"
+            }
         ]
     )
     return response.choices[0].message.content
 
-# YouTube音声をダウンロードして分割・要約
-def transcribe_and_summarize(video_url):
-    # yt-dlp 設定
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': 'audio.%(ext)s',
-        'quiet': True,
-        'no_warnings': True
-    }
 
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(video_url, download=True)
-        audio_file = ydl.prepare_filename(info)
+# -----------------------------
+# メイン処理
+# -----------------------------
+def summarize_youtube(video_url):
+    subtitle_url = get_captions(video_url)
+    if not subtitle_url:
+        return "この動画には字幕がありません。要約できません。"
 
-    # 音声分割（5分ごと）
-    segments = split_audio(audio_file, segment_length=300)
+    text = fetch_subtitle_text(subtitle_url)
+    if not text:
+        return "字幕の取得に失敗しました。"
 
-    # 分割ごとに文字起こし
-    full_text = ""
-    for seg in segments:
-        text = transcribe_audio(seg)
-        full_text += text + "\n"
+    return summarize_text(text)
 
-    # GPTで要約
-    summary = summarize_text(full_text)
-    return summary
 
+# -----------------------------
+# Flask
+# -----------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
     summary = ""
@@ -89,10 +97,12 @@ def index():
         url = request.form.get("url")
         if url:
             try:
-                summary = transcribe_and_summarize(url)
+                summary = summarize_youtube(url)
             except Exception as e:
                 summary = f"エラーが発生しました: {e}"
+
     return render_template("index.html", summary=summary)
 
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
