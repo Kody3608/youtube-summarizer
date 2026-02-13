@@ -21,7 +21,7 @@ def extract_video_id(url):
     return None
 
 # -----------------------------
-# 字幕取得（最新API対応）
+# 字幕取得（v0系互換）
 # -----------------------------
 def get_captions(video_url):
     video_id = extract_video_id(video_url)
@@ -29,16 +29,9 @@ def get_captions(video_url):
         return None, "URLが正しくありません。"
 
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-
-        # 日本語優先 → なければ英語
-        try:
-            transcript = transcript_list.find_transcript(['ja'])
-        except NoTranscriptFound:
-            transcript = transcript_list.find_transcript(['en'])
-
-        fetched = transcript.fetch()
-        text = " ".join([item["text"] for item in fetched])
+        # v0系の get_transcript を使用
+        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["ja","en"])
+        text = " ".join([item["text"] for item in transcript])
         return text, None
 
     except (TranscriptsDisabled, NoTranscriptFound) as e:
@@ -54,8 +47,8 @@ def summarize_text(text):
         response = openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": f"以下の字幕を日本語で簡潔に要約してください:\n\n{text}"}
+                {"role": "system", "content": "以下の字幕を日本語で簡潔に要約してください。"},
+                {"role": "user", "content": text}
             ],
             max_tokens=500
         )
@@ -64,16 +57,7 @@ def summarize_text(text):
         return f"OpenAI APIでエラーが発生しました: {e}"
 
 # -----------------------------
-# メイン処理
-# -----------------------------
-def summarize_youtube(video_url):
-    captions, error = get_captions(video_url)
-    if error:
-        return error
-    return summarize_text(captions)
-
-# -----------------------------
-# Flask
+# Flask ルート
 # -----------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -82,7 +66,11 @@ def index():
     if request.method == "POST":
         url = request.form.get("url")
         if url:
-            summary = summarize_youtube(url)
+            captions, err = get_captions(url)
+            if err:
+                error = err
+            else:
+                summary = summarize_text(captions)
     return render_template("index.html", summary=summary, error=error)
 
 if __name__ == "__main__":
