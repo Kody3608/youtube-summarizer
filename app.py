@@ -22,19 +22,24 @@ def extract_video_id(url):
     return None
 
 # -----------------------------
-# 字幕取得（APIキー専用）
+# 字幕取得（APIキー専用・エラーハンドリング強化）
 # -----------------------------
 def get_captions(video_url):
     video_id = extract_video_id(video_url)
     if not video_id:
         return None, "URLが正しくありません。"
 
+    if not YOUTUBE_API_KEY:
+        return None, "YouTube APIキーが設定されていません。Render環境変数を確認してください。"
+
     try:
         # captions.list を直接 REST API 呼び出し
         url = f"https://youtube.googleapis.com/youtube/v3/captions?part=snippet&videoId={video_id}&key={YOUTUBE_API_KEY}"
         r = requests.get(url)
+        if r.status_code == 400:
+            return None, f"APIキーが無効です。正しいキーを設定してください。"
         if r.status_code != 200:
-            return None, f"字幕取得中にエラーが発生しました: {r.text}"
+            return None, f"字幕取得中にエラーが発生しました: HTTP {r.status_code}"
 
         data = r.json()
         items = data.get("items", [])
@@ -61,7 +66,7 @@ def get_captions(video_url):
         download_url = f"https://www.googleapis.com/youtube/v3/captions/{caption_id}?tfmt=srt&key={YOUTUBE_API_KEY}"
         r2 = requests.get(download_url)
         if r2.status_code != 200:
-            return None, f"字幕取得中にエラーが発生しました: {r2.text}"
+            return None, f"字幕ダウンロード中にエラーが発生しました: HTTP {r2.status_code}"
 
         text = r2.text
         return text, None
