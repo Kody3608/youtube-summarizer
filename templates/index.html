@@ -2,18 +2,18 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>YouTube Summarizer</title>
+    <title>YouTube 音声文字起こし</title>
 </head>
 <body>
-    <h1>YouTube 文字起こし</h1>
+    <h1>YouTube 音声文字起こし</h1>
     <form method="post">
-        <input type="text" name="youtube_url" placeholder="YouTube URL を入力" size="50" required>
+        <input type="text" name="url" placeholder="YouTube URLを入力" size="50">
         <button type="submit">文字起こし</button>
     </form>
 
     {% if transcript %}
-    <h2>文字起こし結果</h2>
-    <textarea rows="20" cols="80">{{ transcript }}</textarea>
+        <h2>文字起こし結果:</h2>
+        <p>{{ transcript }}</p>
     {% endif %}
 </body>
 </html>
