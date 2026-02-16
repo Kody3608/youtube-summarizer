@@ -108,4 +108,5 @@ def index():
     )
 
 if __name__ == "__main__":
+    print("App starting...")
     app.run()
