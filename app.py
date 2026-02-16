@@ -13,7 +13,7 @@ app = Flask(__name__)
 
 # ===== Hugging Face 設定 =====
 HF_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
-HF_MODEL = "sonoisa/t5-small-japanese"  # Render向き・要約対応
+HF_MODEL = "sonoisa/t5-small-japanese"
 
 # ===== YouTube URL → video_id =====
 def extract_video_id(url):
@@ -24,25 +24,26 @@ def extract_video_id(url):
         return parsed.path[1:]
     return None
 
-# ===== 字幕取得 =====
+# ===== 字幕取得（0.6.x / 1.x 両対応）=====
 def get_captions(video_url):
     video_id = extract_video_id(video_url)
     if not video_id:
         return None, "URLが正しくありません。", None
 
     try:
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+
+        # 日本語優先
         try:
-            transcript = YouTubeTranscriptApi.get_transcript(
-                video_id, languages=["ja"]
-            )
+            transcript = transcript_list.find_transcript(["ja"])
             language = "日本語"
         except NoTranscriptFound:
-            transcript = YouTubeTranscriptApi.get_transcript(
-                video_id, languages=["en"]
-            )
+            transcript = transcript_list.find_transcript(["en"])
             language = "英語"
 
-        text = "\n".join([x["text"] for x in transcript])
+        captions = transcript.fetch()
+        text = "\n".join([c["text"] for c in captions])
+
         return text, None, language
 
     except VideoUnavailable:
@@ -66,7 +67,7 @@ def hf_summarize(text):
     }
 
     payload = {
-        "inputs": "要約: " + text[:3000],  # ★長さ制限（超重要）
+        "inputs": "要約: " + text[:3000],  # 長さ制限（必須）
         "parameters": {
             "max_length": 150,
             "min_length": 40,
@@ -76,10 +77,15 @@ def hf_summarize(text):
 
     try:
         response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
+
         if response.status_code != 200:
             return f"Hugging Face エラー: HTTP {response.status_code}"
 
         result = response.json()
+
+        # モデルロード中など
+        if isinstance(result, dict) and "estimated_time" in result:
+            return "モデルを準備中です。数十秒後にもう一度お試しください。"
 
         if isinstance(result, dict) and "error" in result:
             return f"Hugging Face エラー: {result['error']}"
@@ -115,6 +121,6 @@ def index():
         language=language
     )
 
-# ===== ローカル用（Renderではgunicornが起動）=====
+# ===== ローカル用 =====
 if __name__ == "__main__":
     app.run(debug=True)
