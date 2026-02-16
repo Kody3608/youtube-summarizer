@@ -2,13 +2,12 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>YouTube要約アプリ（字幕＋日本語要約）</title>
+    <title>YouTube 要約アプリ</title>
 </head>
 <body>
-    <h1>YouTube要約アプリ（字幕取得＋日本語要約）</h1>
-
+    <h1>YouTube 要約アプリ</h1>
     <form method="post">
-        <input type="text" name="url" size="60" placeholder="YouTubeのURLを入力" required>
+        <input type="text" name="url" placeholder="YouTube URLを入力" size="50" required>
         <button type="submit">要約</button>
     </form>
 
@@ -16,12 +15,9 @@
         <p style="color:red;">{{ error }}</p>
     {% endif %}
 
-    {% if language %}
-        <p>取得できた字幕の言語: {{ language }}</p>
-    {% endif %}
-
     {% if summary %}
-        <h2>要約結果</h2>
+        <p>字幕言語: {{ language }}</p>
+        <h3>要約結果:</h3>
         <p>{{ summary }}</p>
     {% endif %}
 </body>
