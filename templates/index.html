@@ -6,8 +6,15 @@
 </head>
 <body>
     <h1>YouTube 要約アプリ</h1>
+
     <form method="post">
-        <input type="text" name="url" placeholder="YouTube URLを入力" size="50" required>
+        <input
+            type="text"
+            name="url"
+            placeholder="YouTube URLを入力"
+            size="60"
+            required
+        >
         <button type="submit">要約</button>
     </form>
 
@@ -17,7 +24,7 @@
 
     {% if summary %}
         <p>字幕言語: {{ language }}</p>
-        <h3>要約結果:</h3>
+        <h3>要約結果</h3>
         <p>{{ summary }}</p>
     {% endif %}
 </body>
