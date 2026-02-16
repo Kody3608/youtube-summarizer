@@ -2,30 +2,18 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>YouTube 要約アプリ</title>
+    <title>YouTube Summarizer</title>
 </head>
 <body>
-    <h1>YouTube 要約アプリ</h1>
-
+    <h1>YouTube 文字起こし</h1>
     <form method="post">
-        <input
-            type="text"
-            name="url"
-            placeholder="YouTube URLを入力"
-            size="60"
-            required
-        >
-        <button type="submit">要約</button>
+        <input type="text" name="youtube_url" placeholder="YouTube URL を入力" size="50" required>
+        <button type="submit">文字起こし</button>
     </form>
 
-    {% if error %}
-        <p style="color:red;">{{ error }}</p>
-    {% endif %}
-
-    {% if summary %}
-        <p>字幕言語: {{ language }}</p>
-        <h3>要約結果</h3>
-        <p>{{ summary }}</p>
+    {% if transcript %}
+    <h2>文字起こし結果</h2>
+    <textarea rows="20" cols="80">{{ transcript }}</textarea>
     {% endif %}
 </body>
 </html>
